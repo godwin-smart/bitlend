@@ -199,3 +199,86 @@
         false
     )
 )
+
+;; Update borrower reputation scoring
+(define-private (update-user-reputation
+        (user principal)
+        (success bool)
+    )
+    (let (
+            (current-reputation (default-to {
+                successful-repayments: u0,
+                defaults: u0,
+                total-borrowed: u0,
+                reputation-score: u100,
+            }
+                (map-get? user-reputation { user: user })
+            ))
+            (current-score (get reputation-score current-reputation))
+            (new-score (if success
+                (if (> (+ current-score REPUTATION_REWARD) MAX-REPUTATION-SCORE)
+                    MAX-REPUTATION-SCORE
+                    (+ current-score REPUTATION_REWARD)
+                )
+                (if (> current-score REPUTATION_PENALTY)
+                    (- current-score REPUTATION_PENALTY)
+                    MIN-REPUTATION-SCORE
+                )
+            ))
+        )
+        (map-set user-reputation { user: user } {
+            successful-repayments: (if success
+                (+ (get successful-repayments current-reputation) u1)
+                (get successful-repayments current-reputation)
+            ),
+            defaults: (if success
+                (get defaults current-reputation)
+                (+ (get defaults current-reputation) u1)
+            ),
+            total-borrowed: (get total-borrowed current-reputation),
+            reputation-score: new-score,
+        })
+    )
+)
+
+;; COLLATERAL ASSET MANAGEMENT
+
+;; Add approved collateral asset
+(define-public (add-collateral-asset (asset (string-ascii 20)))
+    (begin
+        (asserts! (is-authorized) ERR-NOT-AUTHORIZED)
+        (asserts! (> (len asset) u0) ERR-INVALID-AMOUNT)
+        (map-set allowed-collateral-assets { asset: asset } { is-active: true })
+        (ok true)
+    )
+)
+
+;; Remove collateral asset from whitelist
+(define-public (remove-collateral-asset (asset (string-ascii 20)))
+    (begin
+        (asserts! (is-authorized) ERR-NOT-AUTHORIZED)
+        (asserts! (> (len asset) u0) ERR-INVALID-AMOUNT)
+        (map-set allowed-collateral-assets { asset: asset } { is-active: false })
+        (ok true)
+    )
+)
+
+;; PRICE FEED MANAGEMENT
+
+;; Update asset price data
+(define-public (update-asset-price
+        (asset (string-ascii 20))
+        (price uint)
+    )
+    (begin
+        (asserts! (is-authorized) ERR-NOT-AUTHORIZED)
+        (asserts! (> (len asset) u0) ERR-INVALID-AMOUNT)
+        (asserts! (> price u0) ERR-INVALID-AMOUNT)
+        (asserts! (is-valid-collateral-asset asset) ERR-INVALID-COLLATERAL-ASSET)
+        (map-set asset-prices { asset: asset } {
+            price: price,
+            last-updated: stacks-block-height,
+        })
+        (ok true)
+    )
+)
