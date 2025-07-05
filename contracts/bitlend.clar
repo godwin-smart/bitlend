@@ -94,3 +94,108 @@
         total-active-borrowed: uint,
     }
 )
+
+;; User Reputation System
+(define-map user-reputation
+    { user: principal }
+    {
+        successful-repayments: uint,
+        defaults: uint,
+        total-borrowed: uint,
+        reputation-score: uint,
+    }
+)
+
+;; ADMINISTRATIVE FUNCTIONS
+
+;; Transfer Contract Ownership
+(define-public (set-contract-owner (new-owner principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+        (asserts! (not (is-eq new-owner (var-get contract-owner)))
+            ERR-INVALID-AMOUNT
+        )
+        (var-set contract-owner new-owner)
+        (ok true)
+    )
+)
+
+;; Emergency Circuit Breaker
+(define-public (toggle-emergency-stop)
+    (begin
+        (asserts! (is-authorized) ERR-NOT-AUTHORIZED)
+        (var-set emergency-stopped (not (var-get emergency-stopped)))
+        (ok true)
+    )
+)
+
+;; UTILITY FUNCTIONS
+
+;; Check if contract is operational
+(define-private (is-contract-active)
+    (not (var-get emergency-stopped))
+)
+
+;; Verify administrative privileges
+(define-private (is-authorized)
+    (is-eq tx-sender (var-get contract-owner))
+)
+
+;; Validate collateral asset eligibility
+(define-private (is-valid-collateral-asset (asset (string-ascii 20)))
+    (match (map-get? allowed-collateral-assets { asset: asset })
+        allowed-asset (get is-active allowed-asset)
+        false
+    )
+)
+
+;; Calculate collateral-to-loan ratio
+(define-private (calculate-collateral-ratio
+        (loan-amount uint)
+        (collateral-amount uint)
+    )
+    (/ (* collateral-amount u100) loan-amount)
+)
+
+;; Verify adequate collateral coverage
+(define-private (is-sufficient-collateral
+        (loan-amount uint)
+        (collateral-amount uint)
+    )
+    (>= (calculate-collateral-ratio loan-amount collateral-amount)
+        MIN-COLLATERAL-RATIO
+    )
+)
+
+;; Determine liquidation price threshold
+(define-private (calculate-liquidation-threshold (current-price uint))
+    (/ (* current-price LIQUIDATION-THRESHOLD) u100)
+)
+
+;; Retrieve current asset price with validation
+(define-private (get-current-asset-price (asset (string-ascii 20)))
+    (match (map-get? asset-prices { asset: asset })
+        price-info (if (and
+                (> (get price price-info) u0)
+                (< (- stacks-block-height (get last-updated price-info))
+                    MAX-PRICE-AGE
+                )
+            )
+            (ok (get price price-info))
+            (err ERR-PRICE-FEED-FAILURE)
+        )
+        (err ERR-PRICE-FEED-FAILURE)
+    )
+)
+
+;; Check if collateral maintains liquidation threshold
+(define-private (is-collateral-above-liquidation-threshold (loan-id uint))
+    (match (map-get? loans { loan-id: loan-id })
+        loan (match (get-current-asset-price (get collateral-asset loan))
+            current-price-ok (>= current-price-ok (get liquidation-price-threshold loan))
+            err-code
+            false
+        )
+        false
+    )
+)
