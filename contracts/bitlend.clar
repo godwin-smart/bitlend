@@ -377,3 +377,65 @@
         )
     )
 )
+
+;; Execute loan liquidation
+(define-public (liquidate-loan (loan-id uint))
+    (begin
+        ;; Validate loan identifier
+        (asserts! (> loan-id u0) ERR-LOAN-NOT-FOUND)
+        (let ((loan (unwrap! (map-get? loans { loan-id: loan-id }) ERR-LOAN-NOT-FOUND)))
+            ;; Security and status validation
+            (asserts! (is-contract-active) ERR-EMERGENCY-STOP)
+            (asserts! (is-eq (get status loan) "ACTIVE") ERR-LOAN-NOT-ACTIVE)
+            ;; Liquidation trigger conditions
+            (asserts!
+                (or
+                    (> stacks-block-height
+                        (+ (get start-height loan) (get duration loan))
+                    )
+                    (not (is-collateral-above-liquidation-threshold loan-id))
+                )
+                ERR-LOAN-NOT-DEFAULTED
+            )
+            ;; Execute liquidation
+            (map-set loans { loan-id: loan-id }
+                (merge loan { status: "LIQUIDATED" })
+            )
+            ;; Apply reputation penalty
+            (update-user-reputation (get borrower loan) false)
+            (ok true)
+        )
+    )
+)
+
+;; READ-ONLY FUNCTIONS
+
+;; Retrieve loan information
+(define-read-only (get-loan (loan-id uint))
+    (map-get? loans { loan-id: loan-id })
+)
+
+;; Get user reputation data
+(define-read-only (get-user-reputation (user principal))
+    (map-get? user-reputation { user: user })
+)
+
+;; Check contract operational status
+(define-read-only (get-contract-status)
+    (var-get emergency-stopped)
+)
+
+;; Get current contract owner
+(define-read-only (get-contract-owner)
+    (var-get contract-owner)
+)
+
+;; Calculate total loan repayment amount
+(define-read-only (calculate-total-due (loan-id uint))
+    (match (map-get? loans { loan-id: loan-id })
+        loan (ok (+ (get amount loan)
+            (/ (* (get amount loan) (get interest-rate loan)) u100)
+        ))
+        ERR-LOAN-NOT-FOUND
+    )
+)
